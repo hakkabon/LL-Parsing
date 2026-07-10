@@ -22,6 +22,7 @@ A Swift library implementing a deterministic, top-down **LL(1)** parser. Given a
 - [LL(1) Algorithm in Depth](#ll1-algorithm-in-depth)
    - [FIRST and FOLLOW Sets](#first-and-follow-sets)
    - [Prediction Function](#prediction-function)
+   - [StreamCursor and the two TokenStream front ends](#streamcursor-and-the-two-tokenstream-front-ends)
    - [Parse Stack and Result Stack](#parse-stack-and-result-stack)
    - [Tree Construction](#tree-construction)
 - [Grammar Notations Supported](#grammar-notations-supported)
@@ -72,7 +73,7 @@ LL-Parsing/
 The library depends on three sibling packages from the same author:
 
 - **[Grammar](https://github.com/hakkabon/Grammar)** — `Grammar`, `Production`, `Symbol`, `Terminal`, `NonTerminal`, First/Follow computation, standard-form rewriting.
-- **[GrammarTokenizer](https://github.com/hakkabon/GrammarTokenizer)** — `Tokenizer` and `ParserInput` wrapping the token stream.
+- **[Lexer](https://github.com/hakkabon/Lexer)** — `TokenStream` protocol, plus its two front ends: a DFA lexer bootstrapped from a `GrammarVocabulary`, and GrammarTokenizer's hand-written `Tokenizer` (reached via `TokenizerStream`, used by default — see [LL(1) Algorithm in Depth](#ll1-algorithm-in-depth)).
 - **[GrammarDiagram](https://github.com/hakkabon/GrammarDiagram)** — Railroad-diagram rendering (used by `gtool`).
 
 ---
@@ -87,12 +88,14 @@ The library depends on three sibling packages from the same author:
 public class LLParser: Parser {
     public init(grammar: Grammar)
     public func syntaxTree(for string: String) throws -> ParseTree
+    public func parse(_ source: String) throws -> ParseTree
+    public func parse<S: TokenStream>(stream: S) throws -> ParseTree
 }
 ```
 
 **Initialisation** computes the **FIRST** and **FOLLOW** sets for the entire grammar once via `grammar.firstAndFollow()`, then groups productions by their goal non-terminal into a dictionary for O(1) lookup during parsing. The epsilon and EOF sentinel symbols are also cached at this point.
 
-**`syntaxTree(for:)`** delegates to the private `parse(_:)` method, which runs the main LL(1) loop.
+**`syntaxTree(for:)`** delegates to `parse(_:)`, which tokenizes with the default `TokenizerStream` and hands off to `parse(stream:)`, which runs the main LL(1) loop — see [StreamCursor and the two `TokenStream` front ends](#streamcursor-and-the-two-tokenstream-front-ends).
 
 #### Internal stack item types
 
@@ -255,15 +258,41 @@ These sets are computed once at `LLParser` initialisation and reused for every c
 ### Prediction Function
 
 ```swift
-private func predict(A: NonTerminal, token: Token) throws -> Production?
+private func predict<S: TokenStream>(A: NonTerminal, cursor: StreamCursor<S>) throws -> Production?
 ```
 
-For a given non-terminal `A` and the current lookahead `token`, `predict` iterates over all productions `A → rule` and selects the unique one satisfying either:
+`predict` reads its one token of lookahead via `cursor.peek()` — a small `TokenStream`-backed cursor (`StreamCursor`, in `LLParser.swift`) that replaced GrammarTokenizer's `ParserInput` when the [Lexer](https://github.com/hakkabon/Lexer) package's `TokenStream` protocol was adopted. `cursor` is passed by value here since `predict` only peeks — it never advances the caller's position.
+
+For a given non-terminal `A` and the current lookahead terminal, `predict` iterates over all productions `A → rule` and selects the unique one satisfying either:
 
 1. **Token ∈ FIRST(rule)** — the lookahead is in the rule's First set, so this rule can start with it.
 2. **ε ∈ FIRST(rule) AND Token ∈ FOLLOW(A)** — the rule is nullable and the token legally follows `A`.
 
 If two productions match (i.e. the grammar is not LL(1) for this non-terminal/lookahead pair), a `Logger.ll.warning` is emitted and the first match is returned. This design surfaces conflicts without aborting, which aids grammar debugging.
+
+---
+
+### `StreamCursor` and the two `TokenStream` front ends
+
+```swift
+public func parse(_ source: String) throws -> ParseTree                 // TokenizerStream, by default
+public func parse<S: TokenStream>(stream: S) throws -> ParseTree         // any TokenStream
+```
+
+`parse(_ string:)` tokenizes with GrammarTokenizer's `Tokenizer` (via `Lexer`'s `TokenizerStream`, configured with this parser's own `symbols` list) and hands the result to `parse(stream:)`. Since LL(1) only ever reads strictly left-to-right with one token of lookahead, `StreamCursor` uses `TokenStream`'s random-access `terminal(at:)` purely as an indexed pull — `peek()`/`advance()` never revisit a past position, so this is a drop-in replacement for the previous `ParserInput`-based cursor, not an algorithmic change.
+
+To drive the parser from a DFA lexer instead — e.g. one bootstrapped from a `GrammarVocabulary` via `LexerBuilder.loadVocabulary(_:)` — build a `LexerTokenStream` and call `parse(stream:)` directly:
+
+```swift
+import Lexer
+
+var builder = LexerBuilder()
+builder.loadVocabulary(myGrammarVocabulary)
+let lexer = try builder.build()
+let stream = try LexerTokenStream(source: "n + n", lexer: lexer)
+
+let tree = try parser.parse(stream: stream)
+```
 
 ---
 
@@ -285,8 +314,8 @@ resultStack: []
 **Main loop — three cases:**
 
 1. **`.reduce(parent: A, childCount: n)`** — Pop `n` entries from `resultStack`, wrap them in `ParseTree.node(A, children:)`, and push back.
-2. **`.symbol(.terminal(t))`** — Match `t` against the current token. On success, push `ParseTree.leaf(range)` to `resultStack` and advance the tokenizer.
-3. **`.symbol(.nonTerminal(A))`** — Call `predict(A:token:)` to find the applicable production. Push a `.reduce` marker (processed last), then push the production's non-epsilon symbols in **reverse order** (so the first symbol is processed first).
+2. **`.symbol(.terminal(t))`** — Match `t` against the current token (via `StreamCursor.peek()`, one look-ahead position into whichever `TokenStream` is driving the parse — see [LL(1) Algorithm in Depth](#ll1-algorithm-in-depth)). On success, push `ParseTree.leaf(range)` to `resultStack` and advance the cursor.
+3. **`.symbol(.nonTerminal(A))`** — Call `predict(A:cursor:)` to find the applicable production. Push a `.reduce` marker (processed last), then push the production's non-epsilon symbols in **reverse order** (so the first symbol is processed first).
 
 When the loop pops the EOF terminal from the parse stack, the root of the tree is `resultStack[0]`.
 
@@ -473,7 +502,7 @@ For grammars that are reused across many inputs, the `predict` function can be r
 | Package | Minimum Version | Role |  
 |---------|-----------------|------|  
 | [Grammar](https://github.com/hakkabon/Grammar) | `main` | Grammar, Production, Symbol, First/Follow |  
-| [GrammarTokenizer](https://github.com/hakkabon/GrammarTokenizer) | `main` | Tokenizer, ParserInput |  
+| [Lexer](https://github.com/hakkabon/Lexer) | `main` | TokenStream, TokenizerStream, LexerTokenStream |  
 | [GrammarDiagram](https://github.com/hakkabon/GrammarDiagram) | `main` | Railroad diagram rendering |  
 | [TerminalColors](https://github.com/hakkabon/TerminalColors) | `>= 0.0.1` | ANSI colour output |  
 | [swift-argument-parser](https://github.com/apple/swift-argument-parser) | `>= 1.6.2` | CLI (`gtool`) |  

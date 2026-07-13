@@ -271,8 +271,8 @@ private func leaves(of input: String, tree: ParseTree) -> [String] {
     #expect(leafStrings == ["n", "+", "n"])
 }
 
-/// compressed() should collapse single-child nodes.
-@Test func transform_compressed_collapsesChains() throws {
+/// simplified() should collapse single-child nodes.
+@Test func transform_simplified_collapsesChains() throws {
     // S → A, A → 'a'  gives two nested single-child nodes
     let grammar = try makeGrammar(wsn: """
         S : A
@@ -281,10 +281,10 @@ private func leaves(of input: String, tree: ParseTree) -> [String] {
     let parser = LLParser(grammar: grammar)
     let input = "a"
     let tree = try parser.syntaxTree(for: input).mapLeafs { String(input[$0]) }
-    let compressed = tree.compressed()
+    let simplified = tree.simplified()
 
-    // After compression the single-child chain should be collapsed
-    // The compressed tree should not have single-child non-leaf nodes above depth 0
+    // After simplifying the single-child chain should be collapsed
+    // The simplified tree should not have single-child non-leaf nodes above depth 0
     func maxDepth(_ t: SyntaxTree<NonTerminal, String>) -> Int {
         switch t {
         case .leaf: return 0
@@ -292,7 +292,7 @@ private func leaves(of input: String, tree: ParseTree) -> [String] {
         case .empty: return 0
         }
     }
-    #expect(maxDepth(compressed) <= maxDepth(tree))
+    #expect(maxDepth(simplified) <= maxDepth(tree))
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

@@ -493,7 +493,7 @@ The current implementation throws on the first error. A synchronisation strategy
 
 ### Parse table materialisation
 
-For grammars that are reused across many inputs, the `predict` function can be replaced with a pre-built `[NonTerminal: [Terminal: Production]]` parse table. This trades initialisation time for faster per-parse lookup.
+For grammars that are reused across many inputs, the `predict` function can be replaced with a pre-built `[NonTerminal: [Terminal: Production]]` parse table. This trades initialisation time for faster per-parse lookup — with one caveat: `Terminal`'s `==`/`Hashable` is strict structural equality, so a naive `table[A]?[token]` lookup only works directly for plain `.string` terminals. A `.regularExpression`/`.characterRange`/`.stringList` terminal (e.g. one resolved from a `lexical { }` declaration) won't hash to the same bucket as a concrete lexed token, even when `pattern.matches(token)` would be `true` — see `Terminal.matches(_:)` in the Grammar package. A table that needs to support those either keys the inner dictionary by something the lexer already normalises to (e.g. a `TokenClass`/terminal-kind tag rather than the `Terminal` pattern itself), or falls back to a linear `matches(_:)` scan over that non-terminal's alternatives for the pattern-typed cases while keeping the O(1) dictionary path for plain string terminals.
 
 ---
 

@@ -112,7 +112,13 @@ public class LLParser: Parser {
                 if case .terminal(let terminal) = predictedSymbol {
                     // Need to match current token
                     let (tokenTerminal, range) = try cursor.peek()
-                    guard terminal == tokenTerminal else {
+                    // `terminal` is the grammar's expected terminal (possibly a
+                    // regex/range/list terminal resolved from a `lexical { }`
+                    // declaration); `tokenTerminal` is the concrete lexeme the
+                    // cursor produced. matches(_:) is the asymmetric pattern-vs-
+                    // lexeme check meant for this; plain == is strict structural
+                    // equality and won't accept a token against a pattern terminal.
+                    guard terminal.matches(tokenTerminal) else {
                         throw ParseError.runtimeError("Expected \(terminal), but found token: \(tokenTerminal).")
                     }
                     
@@ -161,11 +167,27 @@ public class LLParser: Parser {
 
             Logger.ll.trace("Prediction for \(A) with current token: \(terminal).")
 
-            // Check if current token is in First(Rule)
-            let matchFirst = firstSet.contains(.terminal(terminal))
-            
+            // Check if current token is in First(Rule).
+            //
+            // firstSet holds grammar terminals (possibly regex/range/list
+            // terminals resolved from a `lexical { }` declaration); `terminal`
+            // is the concrete lexeme the cursor produced. Set.contains(_:) is
+            // hash-based and would look up the wrong bucket for e.g. a
+            // .regularExpression grammar terminal against a .string token (they
+            // legitimately hash differently now that == is strict structural
+            // equality - see Terminal.matches(_:) in the Grammar package), so
+            // this has to scan and ask matches(_:) explicitly rather than call
+            // Set.contains(.terminal(terminal)) directly.
+            let matchFirst = firstSet.contains { symbol in
+                guard case .terminal(let pattern) = symbol else { return false }
+                return pattern.matches(terminal)
+            }
+
             // Check if Rule is Nullable AND current token is in Follow(A)
-            let matchFollow = firstSet.contains(eps) && followA.contains(.terminal(terminal))
+            let matchFollow = firstSet.contains(eps) && followA.contains { symbol in
+                guard case .terminal(let pattern) = symbol else { return false }
+                return pattern.matches(terminal)
+            }
             
             if matchFirst || matchFollow {
                 if prediction != nil {

@@ -11,7 +11,7 @@ let package = Package(
     ],
     products: [
         .library(name: "LL-Parsing", targets: ["LL-Parsing"]),
-        .executable(name: "gtool", targets: ["gtool"]),
+        .executable(name: "ll-gtool", targets: ["ll-gtool"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.6.2"),
@@ -41,14 +41,15 @@ let package = Package(
         ),
         // Move executable target to its destination when library confirmed working.
         .executableTarget(
-            name: "gtool",
+            name: "ll-gtool",
             dependencies: [
                 "LL-Parsing",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
                 .product(name: "ShellOut", package: "shellout"),
                 .product(name: "Grammar", package: "Grammar"),
                 .product(name: "GrammarDiagram", package: "GrammarDiagram"),
-            ]
+            ],
+            path: "Sources/gtool"
         ),
     ]
 )

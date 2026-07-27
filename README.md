@@ -1,6 +1,6 @@
 # LL-Parsing
 
-A Swift library implementing a deterministic, top-down **LL(1)** parser. Given any context-free grammar (loaded from BNF, EBNF, WSN, or `.gen` notation), the parser builds a concrete **parse tree** for valid input sentences, or throws a structured `ParseError` on failure.
+A Swift library implementing a deterministic, top-down **LL(1)** parser. Given any context-free grammar (loaded from BNF, EBNF, WSN, or `.gen` notation), the parser builds a concrete **parse tree** for valid input sentences, throws a structured `ParseError` on failure via `syntaxTree(for:)`/`parse(_:)`, or — via `parseWithRecovery(_:)` — keeps going past a mistake using panic-mode error recovery, collecting every `SyntaxError` it found along the way instead of stopping at the first one.
 
 [![Swift 5.9+](https://img.shields.io/badge/Swift-5.9%2B-orange.svg)](https://swift.org)  
 [![Platforms](https://img.shields.io/badge/platforms-macOS%2011%20%7C%20iOS%2014-blue.svg)](https://developer.apple.com/swift/)  
@@ -17,6 +17,7 @@ A Swift library implementing a deterministic, top-down **LL(1)** parser. Given a
    - [Parser Protocol](#parser-protocol)
    - [SyntaxTree](#syntaxtree)
    - [SyntaxError](#syntaxerror)
+   - [DiagnosticReporter](#diagnosticreporter)
    - [SyntaxTreePrinter & Graphviz](#syntaxtreeprinter--graphviz)
    - [ParserLogger](#parserlogger)
 - [LL(1) Algorithm in Depth](#ll1-algorithm-in-depth)
@@ -25,6 +26,9 @@ A Swift library implementing a deterministic, top-down **LL(1)** parser. Given a
    - [StreamCursor and the two TokenStream front ends](#streamcursor-and-the-two-tokenstream-front-ends)
    - [Parse Stack and Result Stack](#parse-stack-and-result-stack)
    - [Tree Construction](#tree-construction)
+- [Error Recovery](#error-recovery)
+   - [The algorithm](#the-algorithm)
+   - [Using it](#using-it)
 - [Grammar Notations Supported](#grammar-notations-supported)
 - [Command-Line Tool (gtool)](#command-line-tool-gtool)
 - [Usage Examples](#usage-examples)
@@ -56,24 +60,26 @@ LL-Parsing/
 │   │   ├── Parser.swift              # Parser protocol + recognizes(_:) helper
 │   │   ├── LLParser.swift            # LL(1) algorithm implementation
 │   │   ├── ParserLogger.swift        # OSLog category "LL(1)"
-│   │   └── Syntax-Tree/
-│   │       ├── SyntaxTree.swift      # Generic recursive-enum tree + functional transforms
-│   │       ├── SyntaxTreeError.swift # SyntaxError with line/column reporting
-│   │       ├── SyntaxTreePrinter.swift  # ANSI-coloured ASCII tree printer
-│   │       └── SyntaxTreeGraphviz.swift # DOT-language export
+│   │   └── ErrorRecovery/
+│   │       ├── SyntaxError.swift        # SyntaxError with line/column reporting
+│   │       └── DiagnosticReporter.swift # rustc-style pretty-printer for SyntaxError batches
 │   └── gtool/
 │       ├── GrammarTool.swift         # @main ParsableCommand root
 │       ├── Parse.swift               # `parse` sub-command
 │       └── Definitions.swift         # Notation, Method, Analysis, Source enums
 └── Tests/
     └── LL-ParsingTests/
-        └── LL_ParsingTests.swift
+        ├── LL_ParsingTests.swift
+        └── ErrorRecoveryTests.swift
 ```
 
-The library depends on three sibling packages from the same author:
+`SyntaxTree`, `SyntaxTreePrinter`, and `SyntaxTreeGraphviz` are **not** part of this package — they live in the sibling `Parser` package (see below) as shared parse-forest infrastructure other parser packages (CYK, RNGLR, Earley, Earley-Table) also depend on. `LL-Parsing` imports them; it doesn't define them.
+
+The library depends on four sibling packages from the same author:
 
 - **[Grammar](https://github.com/hakkabon/Grammar)** — `Grammar`, `Production`, `Symbol`, `Terminal`, `NonTerminal`, First/Follow computation, standard-form rewriting.
 - **[Lexer](https://github.com/hakkabon/Lexer)** — `TokenStream` protocol, plus its two front ends: a DFA lexer bootstrapped from a `GrammarVocabulary`, and GrammarTokenizer's hand-written `Tokenizer` (reached via `TokenizerStream`, used by default — see [LL(1) Algorithm in Depth](#ll1-algorithm-in-depth)).
+- **[Parser](https://github.com/hakkabon/Parser)** — `SyntaxTree` (aliased here as `ParseTree`), `SyntaxTreePrinter`, `SyntaxTreeGraphviz`, and the `DeterministicParser`/`GeneralizedParser` protocols shared across this author's parser packages.
 - **[GrammarDiagram](https://github.com/hakkabon/GrammarDiagram)** — Railroad-diagram rendering (used by `gtool`).
 
 ---
@@ -90,12 +96,20 @@ public class LLParser: Parser {
     public func syntaxTree(for string: String) throws -> ParseTree
     public func parse(_ source: String) throws -> ParseTree
     public func parse<S: TokenStream>(stream: S) throws -> ParseTree
+
+    // Error recovery — see "Error Recovery" below.
+    public func parseWithRecovery(_ source: String) -> ParseTree?
+    public func parseWithRecovery<S: TokenStream>(stream: S) -> ParseTree?
+    public private(set) var diagnostics: [SyntaxError]
+    public func printDiagnostics()
 }
 ```
 
 **Initialisation** computes the **FIRST** and **FOLLOW** sets for the entire grammar once via `grammar.firstAndFollow()`, then groups productions by their goal non-terminal into a dictionary for O(1) lookup during parsing. The epsilon and EOF sentinel symbols are also cached at this point.
 
-**`syntaxTree(for:)`** delegates to `parse(_:)`, which tokenizes with the default `TokenizerStream` and hands off to `parse(stream:)`, which runs the main LL(1) loop — see [StreamCursor and the two `TokenStream` front ends](#streamcursor-and-the-two-tokenstream-front-ends).
+**`syntaxTree(for:)`** delegates to `parse(_:)`, which tokenizes with the default `TokenizerStream` and hands off to `parse(stream:)`, which runs the main LL(1) loop — see [StreamCursor and the two `TokenStream` front ends](#streamcursor-and-the-two-tokenstream-front-ends). This throw-on-first-error path is unchanged by error recovery.
+
+**`parseWithRecovery(_:)`** runs the same algorithm but never throws: instead of stopping at the first mistake, it records a `SyntaxError` in `diagnostics` and attempts panic-mode recovery so parsing can continue, possibly surfacing more than one mistake from a single call. See [Error Recovery](#error-recovery).
 
 #### Internal stack item types
 
@@ -177,26 +191,53 @@ All transforms respect the `.empty` case and propagate cleanly.
 
 ### SyntaxError
 
-`SyntaxError` is a richly-typed struct (not used by `LLParser` directly, but available for error-reporting layers on top):
+`SyntaxError` is what `parseWithRecovery` collects into `diagnostics` — one value per mistake found, whether or not recovery could actually continue past it:
 
 ```swift
 public struct SyntaxError: Error {
-    public enum Reason {
-        case emptyNotAllowed
-        case unknownToken
-        case unmatchedPattern
-        case unexpectedToken
+    public enum Reason: Equatable {
+        case missingToken          // terminal mismatch, recovered by insertion
+        case extraToken            // terminal mismatch, recovered by deletion
+        case noViableAlternative   // non-terminal prediction failed
+        case invalidToken          // lexical error from the underlying TokenStream
+        case prematureEndOfInput   // ran out of input with no synchronizing token — unrecoverable
+        case emptyNotAllowed       // reserved for callers outside LLParser
+        case unknownToken          // reserved for callers outside LLParser
+        case unmatchedPattern      // reserved for callers outside LLParser
+        case unexpectedToken       // catch-all
     }
-    public let range: Range<String.Index>
+    public let range: Range<String.Index>?
     public let reason: Reason
-    public let context: [NonTerminal]
-    public let string: String
-    public var line: Int    // 0-based
-    public var column: Int  // 0-based
+    public let message: String
+    public let context: [NonTerminal]   // enclosing non-terminals, outermost first
+    public let expected: [Terminal]
+    public let found: Terminal?
+    public let source: String
+    public let line: Int    // 1-based
+    public let column: Int  // 1-based
 }
 ```
 
-`LLParser` itself throws `ParseError` (a simpler enum with `runtimeError`, `tokenError`, `noTokenError`). `SyntaxError` is designed for richer error-recovery scenarios.
+`line`/`column` are computed once at construction time from `range`'s start (or from the very end of `source`, when `range` is `nil` — e.g. for a `.prematureEndOfInput` error, where there is no token left to point at).
+
+`LLParser`'s throw-on-first-error path (`syntaxTree(for:)`/`parse(_:)`) is unaffected by any of this — it still throws the simpler `ParseError` enum (`runtimeError`, `tokenError`, `noTokenError`) exactly as before. `SyntaxError` is only ever produced by `parseWithRecovery`.
+
+---
+
+### DiagnosticReporter
+
+`DiagnosticReporter` pretty-prints a batch of `SyntaxError`s in a style modeled on `rustc` — a bold title, the 1-based location, the offending source line, and a squiggly underline beneath the exact token range. It mirrors the `Grammar` package's own `GrammarParser`/`DiagnosticReporter` pair, which reports errors found while parsing a *grammar definition*; this one reports errors found while parsing *input written in* a grammar.
+
+```swift
+public struct DiagnosticReporter {
+    public init()
+    public func report(diagnostics: [SyntaxError])              // prints to stdout
+    public func string(for diagnostics: [SyntaxError]) -> String // renders without printing
+    public func block(for error: SyntaxError, index: Int) -> String
+}
+```
+
+Colour is applied via `TerminalColors` and automatically disabled when stdout isn't a TTY (e.g. when output is piped, redirected, or captured by a test runner) or when `NO_COLOR` is set. `LLParser.printDiagnostics()` is a convenience that calls `DiagnosticReporter().report(diagnostics:)` with the parser's own `diagnostics`.
 
 ---
 
@@ -347,6 +388,67 @@ Epsilon productions produce a `.reduce` with `childCount = 0`, resulting in a `P
 
 ---
 
+## Error Recovery
+
+`syntaxTree(for:)`/`parse(_:)` throw `ParseError` and stop at the very first mistake — fine for validating well-formed input, but not for tooling that wants to report everything wrong with a file in one pass (a linter, an IDE's live diagnostics, a "did you mean" pass over user-submitted grammar text). `parseWithRecovery(_:)` is the same algorithm with **panic-mode recovery** layered on top: on a mistake, it records a `SyntaxError` and tries to resynchronize with the input instead of giving up, so a single call can surface more than one problem.
+
+### The algorithm
+
+This follows the standard predictive-parser recovery scheme (Aho, Sethi & Ullman, *Compilers: Principles, Techniques, and Tools*, §4.4.3):
+
+- **A terminal on top of the parse stack that doesn't match the current token.** Recovery first checks whether the token right *after* the current one would have matched instead — if so, the current token is treated as **extra** and deleted (`SyntaxError.Reason.extraToken`), which recovers cleanly from a single stray token (`a x b` for `S : 'a' 'b'` deletes `x`). Otherwise, the expected token is assumed to have simply been **missing**, and parsing proceeds as though it had been inserted, without consuming input (`SyntaxError.Reason.missingToken`) — the tree gets a `.empty` placeholder in that position so sibling counts stay correct.
+
+- **A non-terminal `A` on top of the stack with no production whose FIRST (or FOLLOW, for a nullable production) set contains the lookahead.** Recovery reports `SyntaxError.Reason.noViableAlternative`, then deletes input tokens until one is found in FIRST(A) ∪ FOLLOW(A) — the classic *synchronizing set*:
+  - Landing in FIRST(A) retries `A`'s prediction with the new lookahead.
+  - Landing in FOLLOW(A) — which always implicitly includes end-of-input for the grammar's start symbol, and often does transitively for others — treats `A` as having matched nothing (another `.empty` placeholder) and resumes with whatever follows it.
+  - Never finding a synchronizing token before genuine end-of-input is the one case recovery can't paper over: it reports `SyntaxError.Reason.prematureEndOfInput` and stops.
+
+A `.empty` placeholder is used for both of the above, deliberately distinct from the `.node(A, children: [])` a *genuine* epsilon derivation produces — so a recovered tree stays visually and structurally honest about which parts were actually parsed versus assumed.
+
+Diagnostics accumulate in `LLParser.diagnostics`, cleared at the start of every `parseWithRecovery` call; `parse(_:)`/`syntaxTree(for:)` never touch it.
+
+### Using it
+
+```swift
+import Grammar
+import LL_Parsing
+
+let grammar = try Grammar(wsn: "S : 'a' 'b' 'c' 'd'", start: "S")
+let parser = LLParser(grammar: grammar)
+
+// 'b' is missing, 'x' is a stray extra token before 'c', and 'd' is missing.
+if let tree = parser.parseWithRecovery("a x c y") {
+    print(tree.mapLeafs { String("a x c y"[$0]) })
+}
+parser.printDiagnostics()
+```
+
+```
+Found 3 errors:
+
+[1] Expected "b", but found "x". Assuming "b" was missing.
+   --> Line 1:3
+       |
+     1 | a x c y
+       |   ^
+
+[2] Unexpected "x" found. Skipping it.
+   --> Line 1:3
+       |
+     1 | a x c y
+       |   ^
+
+[3] Expected "d", but found "y". Assuming "d" was missing.
+   --> Line 1:7
+       |
+     1 | a x c y
+       |       ^
+```
+
+Prefer working with the structured values directly (e.g. surfacing them in an editor) over the pre-formatted report? Iterate `parser.diagnostics` — each `SyntaxError` carries its own `reason`, `message`, `range`/`line`/`column`, `expected`/`found` terminals, and `context` (the enclosing non-terminals being parsed).
+
+---
+
 ## Grammar Notations Supported
 
 `LLParser` accepts any `Grammar` object from the Grammar package, which can be constructed from four textual notations:
@@ -489,7 +591,11 @@ Implement a new `Grammar(myFormat: String, start: String)` initialiser in the Gr
 
 ### Error recovery
 
-The current implementation throws on the first error. A synchronisation strategy (e.g. panic-mode recovery) can be added by catching `ParseError` inside `parse(_:)` and advancing the token stream to a synchronisation token before re-entering the loop.
+Panic-mode recovery is implemented — see [Error Recovery](#error-recovery) for `parseWithRecovery(_:)`. Natural directions to take it further:
+
+- **Better insertion/deletion heuristics.** The current terminal-mismatch heuristic only ever looks one token ahead (`peek(ahead: 1)`) to choose between insertion and deletion. A cost-based scheme (try both repairs, prefer whichever consumes fewer tokens before the next successful match) would recover better from multi-token typos at the cost of extra lookahead work.
+- **Locale/grammar-specific messages.** `SyntaxError.message` is a fixed English sentence built inside `LLParser`. A grammar could instead supply a message template per non-terminal (e.g. via `lexical { }`-style metadata) for more domain-appropriate wording ("missing closing brace" instead of "expected \"}\"").
+- **Consolidating across parser packages.** This implementation intentionally keeps `SyntaxError`/`DiagnosticReporter` local to `LL-Parsing`. If the same recovery strategy proves out here, the natural next step is lifting a shared version into the `Parser` package (which already anchors `DeterministicParser`/`GeneralizedParser` for this author's other parsers), so CYK, RNGLR, Earley, and Earley-Table can adopt the same diagnostic shape instead of each growing their own.
 
 ### Parse table materialisation
 
@@ -503,8 +609,9 @@ For grammars that are reused across many inputs, the `predict` function can be r
 |---------|-----------------|------|  
 | [Grammar](https://github.com/hakkabon/Grammar) | `main` | Grammar, Production, Symbol, First/Follow |  
 | [Lexer](https://github.com/hakkabon/Lexer) | `main` | TokenStream, TokenizerStream, LexerTokenStream |  
+| [Parser](https://github.com/hakkabon/Parser) | `main` | SyntaxTree (aliased as `ParseTree`), SyntaxTreePrinter, SyntaxTreeGraphviz |  
 | [GrammarDiagram](https://github.com/hakkabon/GrammarDiagram) | `main` | Railroad diagram rendering |  
-| [TerminalColors](https://github.com/hakkabon/TerminalColors) | `>= 0.0.1` | ANSI colour output |  
+| [TerminalColors](https://github.com/hakkabon/TerminalColors) | `>= 0.0.1` | ANSI colour output (tree printer, `DiagnosticReporter`) |  
 | [swift-argument-parser](https://github.com/apple/swift-argument-parser) | `>= 1.6.2` | CLI (`gtool`) |  
 | [ShellOut](https://github.com/JohnSundell/ShellOut) | `>= 2.0.0` | `dot` / `open` invocation from `gtool` |  
 

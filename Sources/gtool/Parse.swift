@@ -10,6 +10,7 @@ import Foundation
 import ArgumentParser
 import Grammar
 import LL_Parsing
+import Parser
 import ShellOut
 
 /// Parses any input sentence based on its given grammar specification.

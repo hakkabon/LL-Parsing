@@ -8,6 +8,7 @@
 
 import Foundation
 import Grammar
+import Parser
 
 /// A syntax tree with non-terminal keys and string range leafs.
 public typealias ParseTree = SyntaxTree<NonTerminal, Range<String.Index>>

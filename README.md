@@ -13,22 +13,22 @@ A Swift library implementing a deterministic, top-down **LL(1)** parser. Given a
 - [Overview](#overview)
 - [Architecture](#architecture)
 - [Core Components](#core-components)
-   - [LLParser](#llparser)
-   - [Parser Protocol](#parser-protocol)
-   - [SyntaxTree](#syntaxtree)
-   - [SyntaxError](#syntaxerror)
-   - [DiagnosticReporter](#diagnosticreporter)
-   - [SyntaxTreePrinter & Graphviz](#syntaxtreeprinter--graphviz)
-   - [ParserLogger](#parserlogger)
+  - [LLParser](#llparser)
+  - [Parser Protocol](#parser-protocol)
+  - [SyntaxTree](#syntaxtree)
+  - [SyntaxError](#syntaxerror)
+  - [DiagnosticReporter](#diagnosticreporter)
+  - [SyntaxTreePrinter & Graphviz](#syntaxtreeprinter--graphviz)
+  - [ParserLogger](#parserlogger)
 - [LL(1) Algorithm in Depth](#ll1-algorithm-in-depth)
-   - [FIRST and FOLLOW Sets](#first-and-follow-sets)
-   - [Prediction Function](#prediction-function)
-   - [StreamCursor and the two TokenStream front ends](#streamcursor-and-the-two-tokenstream-front-ends)
-   - [Parse Stack and Result Stack](#parse-stack-and-result-stack)
-   - [Tree Construction](#tree-construction)
+  - [FIRST and FOLLOW Sets](#first-and-follow-sets)
+  - [Prediction Function](#prediction-function)
+  - [StreamCursor and the two TokenStream front ends](#streamcursor-and-the-two-tokenstream-front-ends)
+  - [Parse Stack and Result Stack](#parse-stack-and-result-stack)
+  - [Tree Construction](#tree-construction)
 - [Error Recovery](#error-recovery)
-   - [The algorithm](#the-algorithm)
-   - [Using it](#using-it)
+  - [The algorithm](#the-algorithm)
+  - [Using it](#using-it)
 - [Grammar Notations Supported](#grammar-notations-supported)
 - [Command-Line Tool (gtool)](#command-line-tool-gtool)
 - [Usage Examples](#usage-examples)
@@ -36,6 +36,7 @@ A Swift library implementing a deterministic, top-down **LL(1)** parser. Given a
 - [Dependencies](#dependencies)
 - [Installation](#installation)
 - [License](#license)
+
 ---
 
 ## Overview
@@ -44,10 +45,10 @@ LL(1) parsing is a **top-down, predictive** parsing strategy in which the parser
 
 The library is structured as a Swift package with two targets:
 
-| Target | Type | Purpose |  
-|--------|------|---------|  
-| `LL-Parsing` | Library | Core parser, syntax-tree data structure, pretty-printer, Graphviz renderer |  
-| `gtool` | Executable | Command-line interface for loading a grammar and parsing input |  
+| Target       | Type       | Purpose                                                                    |
+| ------------ | ---------- | -------------------------------------------------------------------------- |
+| `LL-Parsing` | Library    | Core parser, syntax-tree data structure, pretty-printer, Graphviz renderer |
+| `gtool`      | Executable | Command-line interface for loading a grammar and parsing input             |
 
 ---
 
@@ -175,15 +176,15 @@ print(printableTree)
 
 #### Functional transforms
 
-| Method | Description |  
-|--------|-------------|  
-| `mapNodes(_:)` | Transform every inner node label |  
-| `mapLeafs(_:)` | Transform every leaf value (e.g. `Range<String.Index>` → `String`) |  
-| `filter(_:)` | Prune subtrees whose root does not satisfy a predicate |  
-| `explode(_:)` | Inline a node's children into its parent |  
-| `compressed()` | Collapse single-child nodes (useful for simplifying deep trees) |  
-| `allNodes(where:)` | Collect all subtrees whose root satisfies a predicate |  
-| `leafs` | Collect all leaf values in left-to-right order |  
+| Method             | Description                                                        |
+| ------------------ | ------------------------------------------------------------------ |
+| `mapNodes(_:)`     | Transform every inner node label                                   |
+| `mapLeafs(_:)`     | Transform every leaf value (e.g. `Range<String.Index>` → `String`) |
+| `filter(_:)`       | Prune subtrees whose root does not satisfy a predicate             |
+| `flattened(_:)`    | Inline a node's children into its parent                           |
+| `simplified()`     | Collapse single-child nodes (useful for simplifying deep trees)    |
+| `allNodes(where:)` | Collect all subtrees whose root satisfies a predicate              |
+| `leafs`            | Collect all leaf values in left-to-right order                     |
 
 All transforms respect the `.empty` case and propagate cleanly.
 
@@ -283,11 +284,13 @@ Use **Console.app** or `log stream --predicate 'subsystem == "com.grammar.hakkab
 The `Grammar.firstAndFollow()` method (from the Grammar package) runs two fixed-point iterations:
 
 **FIRST(X):**
+
 - If `X` is a terminal `a`, then `FIRST(X) = {a}`.
 - If `X →* ε`, then `ε ∈ FIRST(X)`.
 - If `X → Y₁ Y₂ … Yₙ`, the set accumulates tokens from each `FIRST(Yᵢ)` as long as the preceding symbols are nullable.
 
 **FOLLOW(A):**
+
 - `FOLLOW(start) = {EOF}`.
 - For each production `B → α A β`: add `FIRST(β) − {ε}` to `FOLLOW(A)`.
 - If `β ⇒* ε`, add `FOLLOW(B)` to `FOLLOW(A)`.
@@ -341,12 +344,13 @@ let tree = try parser.parse(stream: stream)
 
 The algorithm uses **two stacks** in parallel:
 
-| Stack | Type | Role |  
-|-------|------|------|  
-| `parseStack` | `Stack<StackItem>` | Controls the parsing sequence (prediction + matching) |  
-| `resultStack` | `[ParseTree]` | Accumulates completed subtrees for tree assembly |  
+| Stack         | Type               | Role                                                  |
+| ------------- | ------------------ | ----------------------------------------------------- |
+| `parseStack`  | `Stack<StackItem>` | Controls the parsing sequence (prediction + matching) |
+| `resultStack` | `[ParseTree]`      | Accumulates completed subtrees for tree assembly      |
 
 **Initialization:**
+
 ```
 parseStack: [ EOF, <start> ]   (EOF at bottom, start symbol on top)
 resultStack: []
@@ -399,6 +403,7 @@ This follows the standard predictive-parser recovery scheme (Aho, Sethi & Ullman
 - **A terminal on top of the parse stack that doesn't match the current token.** Recovery first checks whether the token right *after* the current one would have matched instead — if so, the current token is treated as **extra** and deleted (`SyntaxError.Reason.extraToken`), which recovers cleanly from a single stray token (`a x b` for `S : 'a' 'b'` deletes `x`). Otherwise, the expected token is assumed to have simply been **missing**, and parsing proceeds as though it had been inserted, without consuming input (`SyntaxError.Reason.missingToken`) — the tree gets a `.empty` placeholder in that position so sibling counts stay correct.
 
 - **A non-terminal `A` on top of the stack with no production whose FIRST (or FOLLOW, for a nullable production) set contains the lookahead.** Recovery reports `SyntaxError.Reason.noViableAlternative`, then deletes input tokens until one is found in FIRST(A) ∪ FOLLOW(A) — the classic *synchronizing set*:
+  
   - Landing in FIRST(A) retries `A`'s prediction with the new lookahead.
   - Landing in FOLLOW(A) — which always implicitly includes end-of-input for the grammar's start symbol, and often does transitively for others — treats `A` as having matched nothing (another `.empty` placeholder) and resumes with whatever follows it.
   - Never finding a synchronizing token before genuine end-of-input is the one case recovery can't paper over: it reports `SyntaxError.Reason.prematureEndOfInput` and stops.
@@ -454,6 +459,7 @@ Prefer working with the structured values directly (e.g. surfacing them in an ed
 `LLParser` accepts any `Grammar` object from the Grammar package, which can be constructed from four textual notations:
 
 ### BNF (Backus–Naur Form)
+
 ```
 <E>  ::= <T> <Ex>
 <Ex> ::= '+' <T> <Ex> | ε
@@ -461,6 +467,7 @@ Prefer working with the structured values directly (e.g. surfacing them in an ed
 ```
 
 ### EBNF (Extended BNF — ISO/IEC 14977 style)
+
 ```
 E  = T , Ex ;
 Ex = '+' , T , Ex | ;
@@ -468,12 +475,15 @@ T  = 'n' ;
 ```
 
 ### WSN (Wirth Syntax Notation)
+
 ```
 E  : T Ex
 Ex : '+' T Ex | ε
 T  : 'n'
 ```
+
 WSN supports inline EBNF constructs:
+
 - `[x]` — optional (zero or one)
 - `{x}` — repetition (zero or more)
 - `(a | b)` — grouping
@@ -481,12 +491,14 @@ WSN supports inline EBNF constructs:
 These are automatically rewritten to standard BNF productions by `grammar.rewriteToStandardForm()`.
 
 ### `.gen` (Generic / Annotated)
+
 ```
 > <E>
 <E>  ::= <T> <Ex>
 <Ex> ::= '+' <T> <Ex> | ε
 <T>  ::= 'n'
 ```
+
 The `> <start>` directive embeds the start symbol inside the file, so no `--start` flag is needed.
 
 ---
@@ -605,15 +617,15 @@ For grammars that are reused across many inputs, the `predict` function can be r
 
 ## Dependencies
 
-| Package | Minimum Version | Role |  
-|---------|-----------------|------|  
-| [Grammar](https://github.com/hakkabon/Grammar) | `main` | Grammar, Production, Symbol, First/Follow |  
-| [Lexer](https://github.com/hakkabon/Lexer) | `main` | TokenStream, TokenizerStream, LexerTokenStream |  
-| [Parser](https://github.com/hakkabon/Parser) | `main` | SyntaxTree (aliased as `ParseTree`), SyntaxTreePrinter, SyntaxTreeGraphviz |  
-| [GrammarDiagram](https://github.com/hakkabon/GrammarDiagram) | `main` | Railroad diagram rendering |  
-| [TerminalColors](https://github.com/hakkabon/TerminalColors) | `>= 0.0.1` | ANSI colour output (tree printer, `DiagnosticReporter`) |  
-| [swift-argument-parser](https://github.com/apple/swift-argument-parser) | `>= 1.6.2` | CLI (`gtool`) |  
-| [ShellOut](https://github.com/JohnSundell/ShellOut) | `>= 2.0.0` | `dot` / `open` invocation from `gtool` |  
+| Package                                                                 | Minimum Version | Role                                                                       |
+| ----------------------------------------------------------------------- | --------------- | -------------------------------------------------------------------------- |
+| [Grammar](https://github.com/hakkabon/Grammar)                          | `main`          | Grammar, Production, Symbol, First/Follow                                  |
+| [Lexer](https://github.com/hakkabon/Lexer)                              | `main`          | TokenStream, TokenizerStream, LexerTokenStream                             |
+| [Parser](https://github.com/hakkabon/Parser)                            | `main`          | SyntaxTree (aliased as `ParseTree`), SyntaxTreePrinter, SyntaxTreeGraphviz |
+| [GrammarDiagram](https://github.com/hakkabon/GrammarDiagram)            | `main`          | Railroad diagram rendering                                                 |
+| [TerminalColors](https://github.com/hakkabon/TerminalColors)            | `>= 0.0.1`      | ANSI colour output (tree printer, `DiagnosticReporter`)                    |
+| [swift-argument-parser](https://github.com/apple/swift-argument-parser) | `>= 1.6.2`      | CLI (`gtool`)                                                              |
+| [ShellOut](https://github.com/JohnSundell/ShellOut)                     | `>= 2.0.0`      | `dot` / `open` invocation from `gtool`                                     |
 
 ---
 
@@ -642,4 +654,3 @@ targets: [
 ## License
 
 MIT License — see [LICENSE](LICENSE) for details.  
-

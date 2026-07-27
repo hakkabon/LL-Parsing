@@ -1,6 +1,6 @@
 //
 //  LLParser.swift
-//  Grammar
+//  LL-Parsing
 //
 //  Created by Ulf Akerstedt-Inoue on 2025/10/26.
 //  Copyright © 2025 hakkabon software. All rights reserved.
@@ -9,6 +9,7 @@
 import Foundation
 import Grammar
 import Lexer
+import Parser
 import OSLog
 
 enum ParseError: Error {
@@ -17,7 +18,7 @@ enum ParseError: Error {
     case noTokenError(String)
 }
 
-public class LLParser: Parser {
+public class LLParser: DeterministicParser {
     // Internal stack items: Either a symbol to match/expand, or a marker to build a tree node
      private enum StackItem {
          case symbol(Symbol)

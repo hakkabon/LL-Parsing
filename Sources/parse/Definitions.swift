@@ -1,6 +1,6 @@
 //
 //  Definitions.swift
-//  grammar-parse
+//  LL-Parsing
 //
 //  Created by Ulf Akerstedt-Inoue on 2026/01/18.
 //  Copyright © 2026 hakkabon software. All rights reserved.

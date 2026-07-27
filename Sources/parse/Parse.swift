@@ -1,6 +1,6 @@
 //
 //  Parse.swift
-//  GrammarParse
+//  LL-Parsing
 //
 //  Created by Ulf Akerstedt-Inoue on 2024/03/16.
 //  Copyright © 2024 hakkabon software. All rights reserved.
@@ -9,8 +9,8 @@
 import Foundation
 import ArgumentParser
 import Grammar
-import LL_Parsing
 import Parser
+import LL_Parsing
 import ShellOut
 
 /// Parses any input sentence based on its given grammar specification.
@@ -43,9 +43,7 @@ extension GrammarTool {
                 try Grammar(bnf: try String(contentsOf: options.grammar), start: options.start)
             }
             
-            let parser: Parser = switch method {
-            case .ll: LLParser(grammar: grammar)
-            }
+            let parser = LLParser(grammar: grammar)
             
             switch input {
             case .arg(let inputString):
@@ -58,7 +56,8 @@ extension GrammarTool {
             }
         }
                 
-        private func runAnalysis(_ analysis: Analysis, parser: Parser, input: String, grammar: Grammar) throws {
+        private func runAnalysis(_ analysis: Analysis, parser: DeterministicParser, input: String, grammar: Grammar) throws {
+            
             switch analysis {
             case .tree:
                 let parsetree = try parser.syntaxTree(for: input).mapLeafs{ String(input[$0]) }

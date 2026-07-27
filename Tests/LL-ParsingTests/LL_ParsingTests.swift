@@ -17,6 +17,7 @@
 
 import Testing
 @testable import LL_Parsing
+@testable import Parser
 import Grammar
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -490,7 +491,7 @@ func error_trailingJunk_throwsParseError() throws {
 @Test func edgeCase_longRepetition_doesNotOverflow() throws {
     let grammar = try Grammar(wsn: "L : 'x' L | ε", start: "L")
     let parser = LLParser(grammar: grammar)
-    let input = String(repeating: "x ", count: 200).trimmingCharacters(in: .whitespaces)
+//    let input = String(repeating: "x ", count: 200).trimmingCharacters(in: .whitespaces)
     // The tokenizer splits on whitespace; rebuild as a single token string
     let compact = String(repeating: "x", count: 50)
     _ = parser.recognizes(compact)  // must not crash

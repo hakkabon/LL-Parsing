@@ -98,6 +98,21 @@ private func isEmpty(_ tree: ParseTree) -> Bool {
     #expect(children.map(\.leaf) == ["a", "b"])
 }
 
+/// EOF is a real parser expectation. Tokens left after a complete start-symbol
+/// derivation must be diagnosed rather than silently accepted.
+@Test func recovery_trailingTokens_areReportedAndTreeIsPreserved() throws {
+    let grammar = try Grammar(wsn: "S : 'a'", start: "S")
+    let parser = LLParser(grammar: grammar)
+    let input = "a x y"
+
+    let tree = try #require(parser.parseWithRecovery(input))
+
+    #expect(tree.root == NonTerminal(name: "S"))
+    #expect(parser.diagnostics.map(\.reason) == [.extraToken, .extraToken])
+    #expect(parser.diagnostics.allSatisfy { $0.expected == [.meta(.eof)] })
+    #expect(parser.diagnostics.map { $0.found?.description } == ["\"x\"", "\"y\""])
+}
+
 /// Several independent mistakes in one input should all be reported from a
 /// single call — the headline feature of panic-mode recovery over the
 /// throw-on-first-error parser.
@@ -107,12 +122,11 @@ private func isEmpty(_ tree: ParseTree) -> Bool {
 
     // 'b' is missing (next real token is 'c', not 'b'); the stray 'x' before
     // 'c' resolves as a deletion because 'c' immediately follows it; 'd' is
-    // missing at the end (trailing 'y' doesn't match, and there's nothing
-    // after it either).
+    // missing; and the remaining 'y' is trailing input.
     let tree = try #require(parser.parseWithRecovery("a x c y"))
 
-    #expect(parser.diagnostics.count == 3)
-    #expect(parser.diagnostics.map(\.reason) == [.missingToken, .extraToken, .missingToken])
+    #expect(parser.diagnostics.count == 4)
+    #expect(parser.diagnostics.map(\.reason) == [.missingToken, .extraToken, .missingToken, .extraToken])
 
     let children = try #require(tree.children)
     #expect(children.count == 4)
@@ -250,7 +264,7 @@ private func isEmpty(_ tree: ParseTree) -> Bool {
 
     let report = DiagnosticReporter().string(for: parser.diagnostics)
 
-    #expect(report.contains("Found 3 errors:"))
+    #expect(report.contains("Found 4 errors:"))
     #expect(report.contains("Line 1"))
     #expect(report.contains("-->"))
     #expect(report.contains("|"))

@@ -12,10 +12,24 @@ import Lexer
 import Parser
 import OSLog
 
-enum ParseError: Error {
+/// An unrecovered failure from ``LLParser/parse(_:)`` or
+/// ``LLParser/syntaxTree(for:)``.
+///
+/// Use ``LLParser/parseWithRecovery(_:)`` when syntax diagnostics should be
+/// collected instead of stopping at the first error.
+public enum ParseError: Error, Equatable {
     case runtimeError(String)
     case tokenError(String)
     case noTokenError(String)
+}
+
+extension ParseError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .runtimeError(let message), .tokenError(let message), .noTokenError(let message):
+            return message
+        }
+    }
 }
 
 public class LLParser: DeterministicParser {
@@ -112,8 +126,14 @@ public class LLParser: DeterministicParser {
                 }
                 
                 if case .terminal(let t) = predictedSymbol, t == .meta(.eof) {
-                    // Return the root of the tree (should be the only item left)
-                    return resultStack.removeFirst()
+                    let (lookahead, _) = try cursor.peek()
+                    guard lookahead == .meta(.eof) else {
+                        throw ParseError.runtimeError("Unexpected trailing token: \(lookahead).")
+                    }
+                    guard resultStack.count == 1, let tree = resultStack.first else {
+                        throw ParseError.runtimeError("Could not build a single complete syntax tree.")
+                    }
+                    return tree
                 }
                 
                 if case .terminal(let terminal) = predictedSymbol {
@@ -194,8 +214,8 @@ public class LLParser: DeterministicParser {
     /// Interprets any `TokenStream` the same way `parse(stream:)` does,
     /// except that it recovers from syntax errors instead of throwing on
     /// the first one. See `parseWithRecovery(_:)` for the full picture, and
-    /// `ALGORITHM.md` (or the README's "Error Recovery" section) for the
-    /// panic-mode algorithm itself, which follows the standard predictive-
+    /// the README's "Error Recovery" section for the panic-mode algorithm
+    /// itself, which follows the standard predictive-
     /// parser recovery scheme (Aho, Sethi & Ullman, *Compilers: Principles,
     /// Techniques, and Tools*, §4.4.3):
     ///
@@ -295,7 +315,38 @@ public class LLParser: DeterministicParser {
                 }
 
                 if case .terminal(let t) = predictedSymbol, t == .meta(.eof) {
-                    finalTree = resultStack.last
+                    // The EOF marker is part of the parse stack, not a token
+                    // that may blindly succeed. Discard and diagnose every
+                    // remaining input token before completing the parse.
+                    while true {
+                        let peeked: (terminal: Terminal, range: Range<String.Index>?)
+                        do {
+                            peeked = try cursor.peek()
+                        } catch {
+                            diagnostics.append(SyntaxError(
+                                reason: .invalidToken,
+                                message: "Invalid trailing token in input: \(error)",
+                                range: nil,
+                                context: contextStack,
+                                expected: [.meta(.eof)],
+                                source: stream.source))
+                            cursor.advance()
+                            continue
+                        }
+
+                        guard peeked.terminal != .meta(.eof) else { break }
+                        diagnostics.append(SyntaxError(
+                            reason: .extraToken,
+                            message: "Unexpected trailing \(peeked.terminal). Skipping it.",
+                            range: peeked.range,
+                            context: contextStack,
+                            expected: [.meta(.eof)],
+                            found: peeked.terminal,
+                            source: stream.source))
+                        cursor.advance()
+                    }
+
+                    finalTree = resultStack.count == 1 ? resultStack.first : nil
                     break parseLoop
                 }
 

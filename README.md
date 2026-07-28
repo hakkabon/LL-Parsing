@@ -48,7 +48,7 @@ The library is structured as a Swift package with two targets:
 | Target       | Type       | Purpose                                                                    |
 | ------------ | ---------- | -------------------------------------------------------------------------- |
 | `LL-Parsing` | Library    | Core parser, syntax-tree data structure, pretty-printer, Graphviz renderer |
-| `gtool`      | Executable | Command-line interface for loading a grammar and parsing input             |
+| `ll-parse`   | Executable | Command-line interface for loading a grammar and parsing input             |
 
 ---
 
@@ -64,7 +64,7 @@ LL-Parsing/
 │   │   └── ErrorRecovery/
 │   │       ├── SyntaxError.swift        # SyntaxError with line/column reporting
 │   │       └── DiagnosticReporter.swift # rustc-style pretty-printer for SyntaxError batches
-│   └── gtool/
+│   └── parse/
 │       ├── GrammarTool.swift         # @main ParsableCommand root
 │       ├── Parse.swift               # `parse` sub-command
 │       └── Definitions.swift         # Notation, Method, Analysis, Source enums
@@ -89,10 +89,10 @@ The library depends on four sibling packages from the same author:
 
 ### LLParser
 
-`LLParser` is the heart of the library. It is a concrete `class` that conforms to the `Parser` protocol.
+`LLParser` is the heart of the library. It is a concrete `class` that conforms to the shared `DeterministicParser` protocol.
 
 ```swift
-public class LLParser: Parser {
+public class LLParser: DeterministicParser {
     public init(grammar: Grammar)
     public func syntaxTree(for string: String) throws -> ParseTree
     public func parse(_ source: String) throws -> ParseTree
@@ -128,11 +128,11 @@ The `.reduce` marker is the key mechanism for building the concrete parse tree w
 ### Parser Protocol
 
 ```swift
-public protocol Parser {
+public protocol DeterministicParser {
     func syntaxTree(for string: String) throws -> ParseTree
 }
 
-public extension Parser {
+public extension DeterministicParser {
     func recognizes(_ string: String) -> Bool
 }
 ```
@@ -221,7 +221,7 @@ public struct SyntaxError: Error {
 
 `line`/`column` are computed once at construction time from `range`'s start (or from the very end of `source`, when `range` is `nil` — e.g. for a `.prematureEndOfInput` error, where there is no token left to point at).
 
-`LLParser`'s throw-on-first-error path (`syntaxTree(for:)`/`parse(_:)`) is unaffected by any of this — it still throws the simpler `ParseError` enum (`runtimeError`, `tokenError`, `noTokenError`) exactly as before. `SyntaxError` is only ever produced by `parseWithRecovery`.
+`LLParser`'s throw-on-first-error path (`syntaxTree(for:)`/`parse(_:)`) is unaffected by any of this — it still throws the public `ParseError` enum (`runtimeError`, `tokenError`, `noTokenError`). `ParseError` also conforms to `LocalizedError`, so callers can present `localizedDescription` directly. `SyntaxError` is only ever produced by `parseWithRecovery`.
 
 ---
 
@@ -402,6 +402,8 @@ This follows the standard predictive-parser recovery scheme (Aho, Sethi & Ullman
 
 - **A terminal on top of the parse stack that doesn't match the current token.** Recovery first checks whether the token right *after* the current one would have matched instead — if so, the current token is treated as **extra** and deleted (`SyntaxError.Reason.extraToken`), which recovers cleanly from a single stray token (`a x b` for `S : 'a' 'b'` deletes `x`). Otherwise, the expected token is assumed to have simply been **missing**, and parsing proceeds as though it had been inserted, without consuming input (`SyntaxError.Reason.missingToken`) — the tree gets a `.empty` placeholder in that position so sibling counts stay correct.
 
+- **Input remains after the start symbol is complete.** End-of-input is treated as a real terminal expectation. The throwing parser rejects the first trailing token; the recovering parser reports each remaining token as `SyntaxError.Reason.extraToken`, discards it, and preserves the completed tree.
+
 - **A non-terminal `A` on top of the stack with no production whose FIRST (or FOLLOW, for a nullable production) set contains the lookahead.** Recovery reports `SyntaxError.Reason.noViableAlternative`, then deletes input tokens until one is found in FIRST(A) ∪ FOLLOW(A) — the classic *synchronizing set*:
   
   - Landing in FIRST(A) retries `A`'s prediction with the new lookahead.
@@ -421,7 +423,7 @@ import LL_Parsing
 let grammar = try Grammar(wsn: "S : 'a' 'b' 'c' 'd'", start: "S")
 let parser = LLParser(grammar: grammar)
 
-// 'b' is missing, 'x' is a stray extra token before 'c', and 'd' is missing.
+// 'b' and 'd' are missing; 'x' is extra before 'c'; 'y' is trailing input.
 if let tree = parser.parseWithRecovery("a x c y") {
     print(tree.mapLeafs { String("a x c y"[$0]) })
 }
@@ -429,7 +431,7 @@ parser.printDiagnostics()
 ```
 
 ```
-Found 3 errors:
+Found 4 errors:
 
 [1] Expected "b", but found "x". Assuming "b" was missing.
    --> Line 1:3
@@ -444,6 +446,12 @@ Found 3 errors:
        |   ^
 
 [3] Expected "d", but found "y". Assuming "d" was missing.
+   --> Line 1:7
+       |
+     1 | a x c y
+       |       ^
+
+[4] Unexpected trailing "y". Skipping it.
    --> Line 1:7
        |
      1 | a x c y

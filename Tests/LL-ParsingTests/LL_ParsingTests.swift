@@ -296,7 +296,6 @@ private func leaves(of input: String, tree: ParseTree) -> [String] {
 }
 
 /// Extra tokens after a complete match should cause a failure.
-@Test(.disabled("Expectation failed: an error was expected but none was thrown"))
 func error_trailingJunk_throwsParseError() throws {
     let grammar = try Grammar(wsn: "S : 'a'", start: "S")
     let parser = LLParser(grammar: grammar)

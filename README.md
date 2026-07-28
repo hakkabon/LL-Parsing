@@ -99,10 +99,9 @@ public class LLParser: DeterministicParser {
     public func parse<S: TokenStream>(stream: S) throws -> ParseTree
 
     // Error recovery — see "Error Recovery" below.
-    public func parseWithRecovery(_ source: String) -> ParseTree?
-    public func parseWithRecovery<S: TokenStream>(stream: S) -> ParseTree?
-    public private(set) var diagnostics: [SyntaxError]
-    public func printDiagnostics()
+    public func parseWithRecovery(_ source: String) -> LLParseResult
+    public func parseWithRecovery<S: TokenStream>(stream: S) -> LLParseResult
+    public func printDiagnostics(for result: LLParseResult)
 }
 ```
 
@@ -110,7 +109,7 @@ public class LLParser: DeterministicParser {
 
 **`syntaxTree(for:)`** delegates to `parse(_:)`, which tokenizes with the default `TokenizerStream` and hands off to `parse(stream:)`, which runs the main LL(1) loop — see [StreamCursor and the two `TokenStream` front ends](#streamcursor-and-the-two-tokenstream-front-ends). This throw-on-first-error path is unchanged by error recovery.
 
-**`parseWithRecovery(_:)`** runs the same algorithm but never throws: instead of stopping at the first mistake, it records a `SyntaxError` in `diagnostics` and attempts panic-mode recovery so parsing can continue, possibly surfacing more than one mistake from a single call. See [Error Recovery](#error-recovery).
+**`parseWithRecovery(_:)`** runs the same algorithm but returns an immutable `LLParseResult` containing its status, best-effort tree, diagnostics, and recovery edits. It attempts panic-mode recovery after each mistake, possibly surfacing more than one problem from a single call. See [Error Recovery](#error-recovery).
 
 #### Internal stack item types
 
@@ -192,10 +191,10 @@ All transforms respect the `.empty` case and propagate cleanly.
 
 ### SyntaxError
 
-`SyntaxError` is what `parseWithRecovery` collects into `diagnostics` — one value per mistake found, whether or not recovery could actually continue past it:
+`SyntaxError` is a compatibility alias for `Parser.ParseDiagnostic`, the diagnostic model shared by deterministic parser packages. `parseWithRecovery` returns these in `LLParseResult.diagnostics`:
 
 ```swift
-public struct SyntaxError: Error {
+public struct ParseDiagnostic: Error {
     public enum Reason: Equatable {
         case missingToken          // terminal mismatch, recovered by insertion
         case extraToken            // terminal mismatch, recovered by deletion
@@ -227,7 +226,7 @@ public struct SyntaxError: Error {
 
 ### DiagnosticReporter
 
-`DiagnosticReporter` pretty-prints a batch of `SyntaxError`s in a style modeled on `rustc` — a bold title, the 1-based location, the offending source line, and a squiggly underline beneath the exact token range. It mirrors the `Grammar` package's own `GrammarParser`/`DiagnosticReporter` pair, which reports errors found while parsing a *grammar definition*; this one reports errors found while parsing *input written in* a grammar.
+`DiagnosticReporter`, now provided by the shared `Parser` package, pretty-prints a batch of `ParseDiagnostic`s in a style modeled on `rustc` — a bold title, the 1-based location, the offending source line, and a squiggly underline beneath the exact token range.
 
 ```swift
 public struct DiagnosticReporter {
@@ -238,7 +237,7 @@ public struct DiagnosticReporter {
 }
 ```
 
-Colour is applied via `TerminalColors` and automatically disabled when stdout isn't a TTY (e.g. when output is piped, redirected, or captured by a test runner) or when `NO_COLOR` is set. `LLParser.printDiagnostics()` is a convenience that calls `DiagnosticReporter().report(diagnostics:)` with the parser's own `diagnostics`.
+Colour is applied via `TerminalColors` and automatically disabled when stdout isn't a TTY or when `NO_COLOR` is set. `LLParser.printDiagnostics(for:)` reports an immutable result's diagnostics.
 
 ---
 
@@ -412,7 +411,7 @@ This follows the standard predictive-parser recovery scheme (Aho, Sethi & Ullman
 
 A `.empty` placeholder is used for both of the above, deliberately distinct from the `.node(A, children: [])` a *genuine* epsilon derivation produces — so a recovered tree stays visually and structurally honest about which parts were actually parsed versus assumed.
 
-Diagnostics accumulate in `LLParser.diagnostics`, cleared at the start of every `parseWithRecovery` call; `parse(_:)`/`syntaxTree(for:)` never touch it.
+Diagnostics and concrete insert/delete/skip edits belong to the returned `LLParseResult`. The parser keeps no mutable per-parse diagnostic state, so results from separate calls remain independent.
 
 ### Using it
 
@@ -424,10 +423,11 @@ let grammar = try Grammar(wsn: "S : 'a' 'b' 'c' 'd'", start: "S")
 let parser = LLParser(grammar: grammar)
 
 // 'b' and 'd' are missing; 'x' is extra before 'c'; 'y' is trailing input.
-if let tree = parser.parseWithRecovery("a x c y") {
+let result = parser.parseWithRecovery("a x c y")
+if let tree = result.tree {
     print(tree.mapLeafs { String("a x c y"[$0]) })
 }
-parser.printDiagnostics()
+parser.printDiagnostics(for: result)
 ```
 
 ```
@@ -458,7 +458,7 @@ Found 4 errors:
        |       ^
 ```
 
-Prefer working with the structured values directly (e.g. surfacing them in an editor) over the pre-formatted report? Iterate `parser.diagnostics` — each `SyntaxError` carries its own `reason`, `message`, `range`/`line`/`column`, `expected`/`found` terminals, and `context` (the enclosing non-terminals being parsed).
+Prefer structured values directly? Inspect `result.status`, iterate `result.diagnostics`, or use `result.recoveryEdits`. Each diagnostic carries its own `reason`, `message`, `range`/`line`/`column`, `expected`/`found` terminals, and non-terminal `context`.
 
 ---
 
@@ -615,7 +615,7 @@ Panic-mode recovery is implemented — see [Error Recovery](#error-recovery) for
 
 - **Better insertion/deletion heuristics.** The current terminal-mismatch heuristic only ever looks one token ahead (`peek(ahead: 1)`) to choose between insertion and deletion. A cost-based scheme (try both repairs, prefer whichever consumes fewer tokens before the next successful match) would recover better from multi-token typos at the cost of extra lookahead work.
 - **Locale/grammar-specific messages.** `SyntaxError.message` is a fixed English sentence built inside `LLParser`. A grammar could instead supply a message template per non-terminal (e.g. via `lexical { }`-style metadata) for more domain-appropriate wording ("missing closing brace" instead of "expected \"}\"").
-- **Consolidating across parser packages.** This implementation intentionally keeps `SyntaxError`/`DiagnosticReporter` local to `LL-Parsing`. If the same recovery strategy proves out here, the natural next step is lifting a shared version into the `Parser` package (which already anchors `DeterministicParser`/`GeneralizedParser` for this author's other parsers), so CYK, RNGLR, Earley, and Earley-Table can adopt the same diagnostic shape instead of each growing their own.
+- **Grammar-specific messages.** The shared diagnostic structure is parser-independent, while message construction and recovery decisions remain LL-specific. A grammar could supply message templates per non-terminal for more domain-appropriate wording.
 
 ### Parse table materialisation
 

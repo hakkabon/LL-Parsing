@@ -49,11 +49,11 @@ private func isEmpty(_ tree: ParseTree) -> Bool {
     let input = "n + n"
 
     let thrownTree = try parser.syntaxTree(for: input)
-    let recoveredTree = parser.parseWithRecovery(input)
+    let result = parser.parseWithRecovery(input)
 
-    #expect(parser.diagnostics.isEmpty)
-    #expect(recoveredTree != nil)
-    #expect(recoveredTree == thrownTree)
+    #expect(result.status == .accepted)
+    #expect(result.diagnostics.isEmpty)
+    #expect(result.tree == thrownTree)
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -68,10 +68,13 @@ private func isEmpty(_ tree: ParseTree) -> Bool {
     let grammar = try Grammar(wsn: "S : 'a' 'b' 'c'", start: "S")
     let parser = LLParser(grammar: grammar)
 
-    let tree = try #require(parser.parseWithRecovery("a c"))
+    let result = parser.parseWithRecovery("a c")
+    let tree = try #require(result.tree)
 
-    #expect(parser.diagnostics.count == 1)
-    #expect(parser.diagnostics[0].reason == .missingToken)
+    #expect(result.status == .recovered)
+    #expect(result.diagnostics.count == 1)
+    #expect(result.diagnostics[0].reason == .missingToken)
+    #expect(result.recoveryEdits.count == 1)
 
     #expect(tree.root == NonTerminal(name: "S"))
     let children = try #require(tree.children)
@@ -87,10 +90,11 @@ private func isEmpty(_ tree: ParseTree) -> Bool {
     let parser = LLParser(grammar: grammar)
     let input = "a x b"
 
-    let tree = try #require(parser.parseWithRecovery(input))
+    let result = parser.parseWithRecovery(input)
+    let tree = try #require(result.tree)
 
-    #expect(parser.diagnostics.count == 1)
-    #expect(parser.diagnostics[0].reason == .extraToken)
+    #expect(result.diagnostics.count == 1)
+    #expect(result.diagnostics[0].reason == .extraToken)
 
     let strTree = tree.mapLeafs { String(input[$0]) }
     #expect(strTree.root == NonTerminal(name: "S"))
@@ -105,12 +109,13 @@ private func isEmpty(_ tree: ParseTree) -> Bool {
     let parser = LLParser(grammar: grammar)
     let input = "a x y"
 
-    let tree = try #require(parser.parseWithRecovery(input))
+    let result = parser.parseWithRecovery(input)
+    let tree = try #require(result.tree)
 
     #expect(tree.root == NonTerminal(name: "S"))
-    #expect(parser.diagnostics.map(\.reason) == [.extraToken, .extraToken])
-    #expect(parser.diagnostics.allSatisfy { $0.expected == [.meta(.eof)] })
-    #expect(parser.diagnostics.map { $0.found?.description } == ["\"x\"", "\"y\""])
+    #expect(result.diagnostics.map(\.reason) == [.extraToken, .extraToken])
+    #expect(result.diagnostics.allSatisfy { $0.expected == [.meta(.eof)] })
+    #expect(result.diagnostics.map { $0.found?.description } == ["\"x\"", "\"y\""])
 }
 
 /// Several independent mistakes in one input should all be reported from a
@@ -123,10 +128,11 @@ private func isEmpty(_ tree: ParseTree) -> Bool {
     // 'b' is missing (next real token is 'c', not 'b'); the stray 'x' before
     // 'c' resolves as a deletion because 'c' immediately follows it; 'd' is
     // missing; and the remaining 'y' is trailing input.
-    let tree = try #require(parser.parseWithRecovery("a x c y"))
+    let result = parser.parseWithRecovery("a x c y")
+    let tree = try #require(result.tree)
 
-    #expect(parser.diagnostics.count == 4)
-    #expect(parser.diagnostics.map(\.reason) == [.missingToken, .extraToken, .missingToken, .extraToken])
+    #expect(result.diagnostics.count == 4)
+    #expect(result.diagnostics.map(\.reason) == [.missingToken, .extraToken, .missingToken, .extraToken])
 
     let children = try #require(tree.children)
     #expect(children.count == 4)
@@ -150,10 +156,11 @@ private func isEmpty(_ tree: ParseTree) -> Bool {
 
     // Two well-formed 'x's, then a stray 'y' that belongs to no production
     // of L and isn't followed by anything recoverable either.
-    let tree = try #require(parser.parseWithRecovery("x x y"))
+    let result = parser.parseWithRecovery("x x y")
+    let tree = try #require(result.tree)
 
-    #expect(parser.diagnostics.count == 1)
-    #expect(parser.diagnostics[0].reason == .noViableAlternative)
+    #expect(result.diagnostics.count == 1)
+    #expect(result.diagnostics[0].reason == .noViableAlternative)
 
     #expect(tree.root == NonTerminal(name: "L"))
     let outerChildren = try #require(tree.children)
@@ -187,28 +194,30 @@ private func isEmpty(_ tree: ParseTree) -> Bool {
     """, start: "S")
     let parser = LLParser(grammar: grammar)
 
-    let tree = parser.parseWithRecovery("p")
+    let result = parser.parseWithRecovery("p")
 
     // 'p' was matched, but S's own `.reduce` never fires, so whatever comes
     // back is at best a bare fragment, never a completed S node.
-    #expect(tree?.root == nil)
-    #expect(parser.diagnostics.contains { $0.reason == .prematureEndOfInput })
+    #expect(result.status == .rejected)
+    #expect(result.tree?.root == nil)
+    #expect(result.diagnostics.contains { $0.reason == .prematureEndOfInput })
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
 // MARK: - 5. Diagnostics bookkeeping
 // ──────────────────────────────────────────────────────────────────────────────
 
-/// `diagnostics` reflects only the most recent `parseWithRecovery` call.
-@Test func recovery_diagnostics_areClearedBetweenCalls() throws {
+/// Every recovery result owns its diagnostics; a later parse cannot mutate it.
+@Test func recovery_resultsKeepIndependentDiagnostics() throws {
     let grammar = try Grammar(wsn: "S : 'a' 'b'", start: "S")
     let parser = LLParser(grammar: grammar)
 
-    _ = parser.parseWithRecovery("a x b")
-    #expect(!parser.diagnostics.isEmpty)
+    let invalid = parser.parseWithRecovery("a x b")
+    #expect(!invalid.diagnostics.isEmpty)
 
-    _ = parser.parseWithRecovery("a b")
-    #expect(parser.diagnostics.isEmpty)
+    let valid = parser.parseWithRecovery("a b")
+    #expect(valid.diagnostics.isEmpty)
+    #expect(!invalid.diagnostics.isEmpty)
 }
 
 /// `parse(_:)` / `syntaxTree(for:)` are unaffected by recovery: they still
@@ -218,7 +227,7 @@ private func isEmpty(_ tree: ParseTree) -> Bool {
     let grammar = try Grammar(wsn: "S : 'a' 'b'", start: "S")
     let parser = LLParser(grammar: grammar)
 
-    _ = parser.parseWithRecovery("a x b") // populates diagnostics
+    _ = parser.parseWithRecovery("a x b")
 
     #expect(throws: (any Error).self) {
         try parser.syntaxTree(for: "a x b")
@@ -260,15 +269,15 @@ private func isEmpty(_ tree: ParseTree) -> Bool {
 @Test func diagnosticReporter_string_includesCountLineNumberAndMessage() throws {
     let grammar = try Grammar(wsn: "S : 'a' 'b' 'c' 'd'", start: "S")
     let parser = LLParser(grammar: grammar)
-    _ = parser.parseWithRecovery("a x c y")
+    let result = parser.parseWithRecovery("a x c y")
 
-    let report = DiagnosticReporter().string(for: parser.diagnostics)
+    let report = DiagnosticReporter().string(for: result.diagnostics)
 
     #expect(report.contains("Found 4 errors:"))
     #expect(report.contains("Line 1"))
     #expect(report.contains("-->"))
     #expect(report.contains("|"))
-    for error in parser.diagnostics {
+    for error in result.diagnostics {
         #expect(report.contains(error.message))
     }
 }

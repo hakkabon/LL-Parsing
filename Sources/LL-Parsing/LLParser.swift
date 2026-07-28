@@ -48,12 +48,6 @@ public class LLParser: DeterministicParser {
                    "'", "}", "]", ":]", ")", ";", "/", "*", "?", "??", ":="]
     let keywords: [String] = []
 
-    /// Diagnostics collected by the most recent call to `parseWithRecovery`.
-    /// Cleared at the start of every such call; unaffected by `parse(_:)`/
-    /// `syntaxTree(for:)`, which throw on the first error instead.
-    public private(set) var diagnostics: [SyntaxError] = []
-    private let diagnosticReporter = DiagnosticReporter()
-
     public init(grammar: Grammar) {
         self.grammar = grammar
         (first,follow) = grammar.firstAndFollow()
@@ -184,11 +178,9 @@ public class LLParser: DeterministicParser {
 
     // MARK: - Error Recovery
 
-    /// Prints the diagnostics collected by the most recent `parseWithRecovery`
-    /// call, in the same "rustc-style" format `Grammar`'s `GrammarParser` uses
-    /// for its own diagnostics. Does nothing if there are none.
-    public func printDiagnostics() {
-        diagnosticReporter.report(diagnostics: diagnostics)
+    /// Prints a recovery result's diagnostics with source context.
+    public func printDiagnostics(for result: LLParseResult) {
+        DiagnosticReporter().report(diagnostics: result.diagnostics)
     }
 
     /// Interprets a source character stream the same way `parse(_:)` does,
@@ -199,15 +191,9 @@ public class LLParser: DeterministicParser {
     /// at the cost of the returned tree only being a best-effort
     /// approximation of what a fully well-formed input would have produced.
     ///
-    /// `diagnostics` is cleared at the start of every call. Inspect it (or
-    /// call `printDiagnostics()`) after this returns to see what, if
-    /// anything, went wrong.
-    ///
-    /// - Returns: A best-effort parse tree, or `nil` if recovery could not
-    ///   proceed far enough to produce one (e.g. input ended while a
-    ///   non-terminal was still being expanded, with no synchronizing token
-    ///   ever found).
-    public func parseWithRecovery(_ source: String) -> ParseTree? {
+    /// - Returns: An immutable result containing status, best-effort tree,
+    ///   diagnostics, and the concrete recovery edits that were applied.
+    public func parseWithRecovery(_ source: String) -> LLParseResult {
         parseWithRecovery(stream: TokenizerStream(source: source, symbols: Set(symbols), keywords: Set(keywords)))
     }
 
@@ -243,9 +229,9 @@ public class LLParser: DeterministicParser {
     /// `.node(_, children: [])` — that shape is reserved for a *genuine*
     /// epsilon derivation, so the two stay visually and structurally
     /// distinguishable when inspecting a recovered tree.
-    public func parseWithRecovery<S: TokenStream>(stream: S) -> ParseTree? {
-        diagnostics.removeAll()
-
+    public func parseWithRecovery<S: TokenStream>(stream: S) -> LLParseResult {
+        var diagnostics: [ParseDiagnostic] = []
+        var recoveryEdits: [RecoveryEdit] = []
         var cursor = StreamCursor(stream: stream)
         var parseStack = Stack<StackItem>()
         var resultStack = [ParseTree]()
@@ -262,6 +248,7 @@ public class LLParser: DeterministicParser {
         parseStack.push(.symbol(.nonTerminal(grammar.start)))
 
         var finalTree: ParseTree?
+        var rejected = false
 
         // A retry (re-pushing the same symbol after a recovery step) is
         // always paired with either consuming a token or narrowing the
@@ -282,6 +269,7 @@ public class LLParser: DeterministicParser {
                     range: nil,
                     context: contextStack,
                     source: stream.source))
+                rejected = true
                 break parseLoop
             }
             switch predictedItem {
@@ -311,6 +299,7 @@ public class LLParser: DeterministicParser {
                         range: nil,
                         context: contextStack,
                         source: stream.source))
+                    rejected = true
                     break parseLoop
                 }
 
@@ -343,6 +332,7 @@ public class LLParser: DeterministicParser {
                             expected: [.meta(.eof)],
                             found: peeked.terminal,
                             source: stream.source))
+                        recoveryEdits.append(.delete(terminal: peeked.terminal, atToken: cursor.position))
                         cursor.advance()
                     }
 
@@ -384,6 +374,7 @@ public class LLParser: DeterministicParser {
                             expected: [terminal],
                             found: peeked.terminal,
                             source: stream.source))
+                        recoveryEdits.append(.delete(terminal: peeked.terminal, atToken: cursor.position))
                         cursor.advance()
                         parseStack.push(.symbol(predictedSymbol))
                     } else {
@@ -398,6 +389,7 @@ public class LLParser: DeterministicParser {
                             expected: [terminal],
                             found: peeked.terminal,
                             source: stream.source))
+                        recoveryEdits.append(.insert(terminal: terminal, atToken: cursor.position))
                         resultStack.append(.empty)
                     }
                 }
@@ -448,6 +440,8 @@ public class LLParser: DeterministicParser {
                             source: stream.source))
 
                         var resynced = false
+                        let resyncStart = cursor.position
+                        var skipped: [Terminal] = []
                         while lookahead.terminal != .meta(.eof) {
                             if lookaheadMatchesFirst(of: nt, lookahead: lookahead.terminal) {
                                 resynced = true
@@ -456,8 +450,12 @@ public class LLParser: DeterministicParser {
                             if lookaheadMatchesFollow(of: nt, lookahead: lookahead.terminal) {
                                 break
                             }
+                            skipped.append(lookahead.terminal)
                             cursor.advance()
                             lookahead = (try? cursor.peek()) ?? (.meta(.eof), nil)
+                        }
+                        if !skipped.isEmpty {
+                            recoveryEdits.append(.skip(terminals: skipped, fromToken: resyncStart))
                         }
 
                         if resynced {
@@ -482,6 +480,7 @@ public class LLParser: DeterministicParser {
                                 range: nil,
                                 context: contextStack,
                                 source: stream.source))
+                            rejected = true
                             break parseLoop
                         }
                     }
@@ -489,7 +488,16 @@ public class LLParser: DeterministicParser {
             }
         }
 
-        return finalTree ?? resultStack.last
+        let tree = finalTree ?? resultStack.last
+        let status: ParseStatus = rejected || finalTree == nil
+            ? .rejected
+            : (diagnostics.isEmpty ? .accepted : .recovered)
+        return LLParseResult(
+            status: status,
+            tree: tree,
+            diagnostics: diagnostics,
+            recoveryEdits: recoveryEdits
+        )
     }
 
     /// Returns `true` if `lookahead` matches some non-epsilon terminal in

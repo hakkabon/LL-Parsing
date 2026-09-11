@@ -13,11 +13,11 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.6.2"),
         .package(url: "https://github.com/JohnSundell/ShellOut.git", from: "2.0.0"),
-        .package(url: "https://github.com/hakkabon/Grammar.git", branch: "main"),
-        .package(url: "https://github.com/hakkabon/Lexer.git", branch: "main"),
-        .package(url: "https://github.com/hakkabon/GrammarDiagram.git", branch: "main"),
-        .package(url: "https://github.com/hakkabon/TerminalColors.git", from: "0.0.1"),
-        .package(url: "https://github.com/hakkabon/Parser.git", branch: "main"),
+        .package(url: "https://github.com/hakkabon/Grammar.git", .upToNextMinor(from: "0.3.0")),
+        .package(url: "https://github.com/hakkabon/Lexer.git", .upToNextMinor(from: "0.2.0")),
+        .package(url: "https://github.com/hakkabon/GrammarDiagram.git", .upToNextMinor(from: "0.1.0")),
+        .package(url: "https://github.com/hakkabon/TerminalColors.git", .upToNextMinor(from: "0.1.0")),
+        .package(url: "https://github.com/hakkabon/Parser.git", .upToNextMinor(from: "0.3.0")),
     ],
     targets: [
         .target(
@@ -36,6 +36,7 @@ let package = Package(
             dependencies: [
                 "LL-Parsing",
                 .product(name: "Grammar", package: "Grammar"),
+                .product(name: "Lexer", package: "Lexer"),
                 .product(name: "Parser", package: "Parser"),
             ]
         ),

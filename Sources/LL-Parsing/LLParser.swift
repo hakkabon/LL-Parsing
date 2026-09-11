@@ -10,7 +10,6 @@ import Foundation
 import Grammar
 import Lexer
 import Parser
-import OSLog
 
 /// An unrecovered failure from ``LLParser/parse(_:)`` or
 /// ``LLParser/syntaxTree(for:)``.
@@ -94,7 +93,7 @@ public class LLParser: DeterministicParser {
         // Loop until the stack is empty or we explicitly break
         while let predictedItem = parseStack.pop() {
 
-            Logger.ll.trace("Current predicted \(String(describing: predictedItem)) item")
+            LLParserLog.trace("Current predicted \(String(describing: predictedItem)) item")
             
             switch predictedItem {
                 
@@ -143,7 +142,7 @@ public class LLParser: DeterministicParser {
                         throw ParseError.runtimeError("Expected \(terminal), but found token: \(tokenTerminal).")
                     }
                     
-                    Logger.ll.trace("Matched \(predictedSymbol) with current token \(tokenTerminal).")
+                    LLParserLog.trace("Matched \(predictedSymbol) with current token \(tokenTerminal).")
                     
                     // Create Leaf Node
                     resultStack.append(range.map(ParseTree.leaf) ?? .empty)
@@ -530,7 +529,7 @@ public class LLParser: DeterministicParser {
             
             guard let followA = follow[A] else { continue }
 
-            Logger.ll.trace("Prediction for \(A) with current token: \(terminal).")
+            LLParserLog.trace("Prediction for \(A) with current token: \(terminal).")
 
             // Check if current token is in First(Rule).
             //
@@ -556,7 +555,7 @@ public class LLParser: DeterministicParser {
             
             if matchFirst || matchFollow {
                 if prediction != nil {
-                    Logger.ll.warning("LL(1) conflict \(prediction!) vs \(production)")
+                    LLParserLog.warning("LL(1) conflict \(prediction!) vs \(production)")
                 }
                 if prediction == nil {
                     prediction = production
@@ -564,7 +563,7 @@ public class LLParser: DeterministicParser {
             }
         }
         if let prediction {
-            Logger.ll.trace("Production \(prediction) predicted from nonterminal: \(A) and look-ahead \(terminal).")
+            LLParserLog.trace("Production \(prediction) predicted from nonterminal: \(A) and look-ahead \(terminal).")
         }
         return prediction
     }

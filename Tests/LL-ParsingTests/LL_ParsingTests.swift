@@ -19,6 +19,7 @@ import Testing
 @testable import LL_Parsing
 @testable import Parser
 import Grammar
+import Lexer
 
 // ──────────────────────────────────────────────────────────────────────────────
 // MARK: - Helpers
@@ -521,4 +522,54 @@ func error_trailingJunk_throwsParseError() throws {
     let u3 = Unique(NonTerminal(name: "A"), 1)
     #expect(u1 != u2)      // different ids
     #expect(u1 == u3)      // same id and node
+}
+
+/// The ecosystem boundary supplies normalized token kinds rather than asking
+/// each parser to tokenize the original spelling again.
+@Test func ecosystem_positionedTokenStreamUsesTheSharedParserBoundary() throws {
+    struct PositionedStream: TokenStream {
+        let source = "ID PLUS ID"
+        let values: [(Terminal, Range<String.Index>)]
+        var count: Int { values.count }
+
+        init() {
+            let source = "ID PLUS ID"
+            let firstEnd = source.index(source.startIndex, offsetBy: 2)
+            let plusStart = source.index(after: firstEnd)
+            let plusEnd = source.index(plusStart, offsetBy: 4)
+            let secondStart = source.index(after: plusEnd)
+            values = [
+                (Terminal(string: "ID"), source.startIndex..<firstEnd),
+                (Terminal(string: "PLUS"), plusStart..<plusEnd),
+                (Terminal(string: "ID"), secondStart..<source.endIndex),
+            ]
+        }
+
+        func terminal(at position: Int) throws -> (terminal: Terminal, range: Range<String.Index>) {
+            values[position]
+        }
+    }
+
+    let grammar = Grammar(
+        productions: [
+            Production(goal: NonTerminal(name: "Expression"), rule: [
+                .nonTerminal(NonTerminal(name: "Term")),
+                .nonTerminal(NonTerminal(name: "Tail")),
+            ]),
+            Production(goal: NonTerminal(name: "Tail"), rule: [
+                .terminal(Terminal(string: "PLUS")),
+                .nonTerminal(NonTerminal(name: "Term")),
+                .nonTerminal(NonTerminal(name: "Tail")),
+            ]),
+            Production(goal: NonTerminal(name: "Tail"), rule: []),
+            Production(goal: NonTerminal(name: "Term"), rule: [
+                .terminal(Terminal(string: "ID")),
+            ]),
+        ],
+        start: NonTerminal(name: "Expression"), lexicalTokens: [:]
+    )
+
+    let tree = try LLParser(grammar: grammar).parse(stream: PositionedStream())
+    #expect(tree.root?.name == "Expression")
+    #expect(tree.leafs.count == 3)
 }

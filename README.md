@@ -645,7 +645,7 @@ Add the dependency to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/hakkabon/LL-Parsing.git", branch: "main"),
+    .package(url: "https://github.com/hakkabon/LL-Parsing.git", .upToNextMinor(from: "0.1.0")),
 ],
 targets: [
     .target(

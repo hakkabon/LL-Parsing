@@ -6,13 +6,29 @@
 //  Copyright © 2025 hakkabon software. All rights reserved.
 //
 
+#if canImport(OSLog)
 import OSLog
+#endif
 
-extension Logger {
-    /// Using your bundle identifier is a great way to ensure a unique identifier.
-    private static var subsystem = "com.grammar.hakkabon"
+/// Keeps diagnostics optional and the parsing product portable to platforms
+/// where Apple's unified logging module is unavailable.
+enum LLParserLog {
+    #if canImport(OSLog)
+    private static let logger = Logger(
+        subsystem: "com.grammar.hakkabon", category: "LL(1)"
+    )
 
-    /// Logs all processing related to the parsing domain.
-    static let ll = Logger(subsystem: subsystem, category: "LL(1)")
+    static func trace(_ message: @autoclosure () -> String) {
+        let rendered = message()
+        logger.trace("\(rendered, privacy: .public)")
+    }
 
+    static func warning(_ message: @autoclosure () -> String) {
+        let rendered = message()
+        logger.warning("\(rendered, privacy: .public)")
+    }
+    #else
+    static func trace(_ message: @autoclosure () -> String) {}
+    static func warning(_ message: @autoclosure () -> String) {}
+    #endif
 }

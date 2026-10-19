@@ -29,7 +29,7 @@ let package = Package(
                 .product(name: "TerminalColors", package: "TerminalColors"),
                 .product(name: "Parser", package: "Parser"),
             ],
-            path: "Sources/LL-Parsing",
+            path: "Sources/LL-Parsing"
         ),
         .testTarget(
             name: "LL-ParsingTests",

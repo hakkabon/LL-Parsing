@@ -2,6 +2,10 @@
 
 A Swift library implementing a deterministic, top-down **LL(1)** parser. Given any context-free grammar (loaded from BNF, EBNF, WSN, or `.gen` notation), the parser builds a concrete **parse tree** for valid input sentences, throws a structured `ParseError` on failure via `syntaxTree(for:)`/`parse(_:)`, or — via `parseWithRecovery(_:)` — keeps going past a mistake using panic-mode error recovery, collecting every `SyntaxError` it found along the way instead of stopping at the first one.
 
+Release 0.1.2 owns an executable, evidence-checked LL workload. Run
+`swift run -c release ll-microbenchmark [report.json]`; Parser owns the report
+envelope, while this repository owns the grammar, input, boundary, and counters.
+
 [![Swift 5.9+](https://img.shields.io/badge/Swift-5.9%2B-orange.svg)](https://swift.org)  
 [![Platforms](https://img.shields.io/badge/platforms-macOS%2011%20%7C%20iOS%2014-blue.svg)](https://developer.apple.com/swift/)  
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)  
@@ -645,7 +649,7 @@ Add the dependency to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/hakkabon/LL-Parsing.git", .upToNextMinor(from: "0.1.0")),
+    .package(url: "https://github.com/hakkabon/LL-Parsing.git", .upToNextMinor(from: "0.1.2")),
 ],
 targets: [
     .target(

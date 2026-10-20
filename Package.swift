@@ -9,6 +9,7 @@ let package = Package(
     products: [
         .library(name: "LL-Parsing", targets: ["LL-Parsing"]),
         .executable(name: "ll-parse", targets: ["ll-parse"]),
+        .executable(name: "ll-microbenchmark", targets: ["ll-microbenchmark"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.6.2"),
@@ -17,7 +18,7 @@ let package = Package(
         .package(url: "https://github.com/hakkabon/Lexer.git", .upToNextMinor(from: "0.2.0")),
         .package(url: "https://github.com/hakkabon/GrammarDiagram.git", .upToNextMinor(from: "0.1.0")),
         .package(url: "https://github.com/hakkabon/TerminalColors.git", .upToNextMinor(from: "0.1.0")),
-        .package(url: "https://github.com/hakkabon/Parser.git", .upToNextMinor(from: "0.3.0")),
+        .package(url: "https://github.com/hakkabon/Parser.git", .upToNextMinor(from: "0.4.1")),
     ],
     targets: [
         .target(
@@ -41,6 +42,13 @@ let package = Package(
             ]
         ),
         // Move executable target to its destination when library confirmed working.
+        .executableTarget(
+            name: "ll-microbenchmark",
+            dependencies: [
+                "LL-Parsing",
+                .product(name: "Parser", package: "Parser"),
+            ]
+        ),
         .executableTarget(
             name: "ll-parse",
             dependencies: [

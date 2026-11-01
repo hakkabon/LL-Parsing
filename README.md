@@ -1,5 +1,11 @@
 # LL-Parsing
 
+`LLRegionMemoizer` provides reusable incremental region caching for recursive
+and predictive LL parsers. It proves reuse from stable token identities,
+relative source offsets, and following lookahead; preserves nested entries
+across outer-region hits; and relocates diagnostics, expectations, and recovery
+edits for replay. Language packages supply only token and evidence conformances.
+
 A Swift library implementing a deterministic, top-down **LL(1)** parser. Given any context-free grammar (loaded from BNF, EBNF, WSN, or `.gen` notation), the parser builds a concrete **parse tree** for valid input sentences, throws a structured `ParseError` on failure via `syntaxTree(for:)`/`parse(_:)`, or — via `parseWithRecovery(_:)` — keeps going past a mistake using panic-mode error recovery, collecting every `SyntaxError` it found along the way instead of stopping at the first one.
 
 Release 0.1.2 owns an executable, evidence-checked LL workload. Run

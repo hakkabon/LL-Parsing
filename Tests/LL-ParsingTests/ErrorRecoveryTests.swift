@@ -17,6 +17,7 @@ import Testing
 @testable import LL_Parsing
 import Grammar
 import Parser
+import IncrementalParsing
 
 // ──────────────────────────────────────────────────────────────────────────────
 // MARK: - Helpers
@@ -100,6 +101,27 @@ private func isEmpty(_ tree: ParseTree) -> Bool {
     #expect(strTree.root == NonTerminal(name: "S"))
     let children = try #require(strTree.children)
     #expect(children.map(\.leaf) == ["a", "b"])
+}
+
+/// LL recovery is exported through the same stable-token repair algebra used
+/// by the other parser engines; no LL stack or tree detail leaks into replay.
+@Test func recovery_extraToken_exportsPortableRecoveryPlan() throws {
+    let grammar = try Grammar(wsn: "S : 'a' 'b'", start: "S")
+    let result = LLParser(grammar: grammar).parseWithRecovery("a x b")
+    let locations = [
+        ParseRecoveryTokenLocation(tokenIndex: 0, id: "a#0", range: SourceRange(0, 1)),
+        ParseRecoveryTokenLocation(tokenIndex: 1, id: "x#1", range: SourceRange(2, 3)),
+        ParseRecoveryTokenLocation(tokenIndex: 2, id: "b#2", range: SourceRange(4, 5)),
+    ]
+
+    let plan = try result.incrementalRecoveryPlan(
+        tokens: locations, endOfInputOffset: 5)
+
+    #expect(plan.totalCost == 1)
+    #expect(plan.steps.count == 1)
+    #expect(plan.steps[0].action == .delete("x#1", range: SourceRange(2, 3)))
+    #expect(plan.steps[0].expected == [.literal("b")])
+    #expect(plan.steps[0].diagnosticID == "parser.diagnostic.0")
 }
 
 /// EOF is a real parser expectation. Tokens left after a complete start-symbol

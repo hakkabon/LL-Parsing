@@ -18,7 +18,8 @@ let package = Package(
         .package(path: "../Lexer"),
         .package(url: "https://github.com/hakkabon/GrammarDiagram.git", .upToNextMinor(from: "0.1.0")),
         .package(url: "https://github.com/hakkabon/TerminalColors.git", .upToNextMinor(from: "0.1.0")),
-        .package(url: "https://github.com/hakkabon/Parser.git", .upToNextMinor(from: "0.4.1")),
+        .package(path: "../Parser"),
+        .package(path: "../Incremental-Parsing"),
     ],
     targets: [
         .target(
@@ -39,6 +40,7 @@ let package = Package(
                 .product(name: "Grammar", package: "Grammar"),
                 .product(name: "Lexer", package: "Lexer"),
                 .product(name: "Parser", package: "Parser"),
+                .product(name: "IncrementalParsing", package: "Incremental-Parsing"),
             ]
         ),
         // Move executable target to its destination when library confirmed working.
